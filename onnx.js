@@ -16,11 +16,11 @@ const kConfigFileName = 'config.json';
 const kModelDataPath = 'onnx';
 const kModelFileName = 'model_q4f16.onnx';
 const kModelExternalDataFileName = 'model_q4f16.onnx_data';
-const kOfficialPhi3ONNXModelRepo = 'https://huggingface.co/microsoft/Phi-3-mini-4k-instruct-onnx-web';
 
 let kConfigFileAbsolutePath = `${env.localModelPath}/${kConfigFileName}`;
 let kModelFileAbsolutePath = `${env.localModelPath}/${kModelDataPath}/${kModelFileName}`;
 let kModelExternalDataAbsolutePath = `${env.localModelPath}/${kModelDataPath}/${kModelExternalDataFileName}`;
+
 if (!kUseLocalModel) {
     kConfigFileAbsolutePath = "https://huggingface.co/microsoft/Phi-3-mini-4k-instruct-onnx-web/resolve/main";
     kModelFileAbsolutePath = "https://huggingface.co/microsoft/Phi-3-mini-4k-instruct-onnx-web/resolve/main/onnx/model_q4f16.onnx";
@@ -28,6 +28,8 @@ if (!kUseLocalModel) {
     env.allowRemoteModels = true;
     env.allowLocalModels = false;
 }
+
+const kOfficialPhi3ONNXModelRepo = 'https://huggingface.co/microsoft/Phi-3-mini-4k-instruct-onnx-web';
 
 const kMaxOutputTokens = 4096;
 
@@ -37,13 +39,17 @@ class Tokenizer {
         this.tokenizer = await AutoTokenizer.from_pretrained('./');
     }
     async TokenizePrompt(prompt) {
-        const promptTokenizerResult = await this.tokenizer(prompt, { return_tensor: false, padding: true, truncation: true });
+        const promptTokenizerResult = await this.tokenizer(
+            prompt, { return_tensor: false, padding: true, truncation: true });
         const promptTokens = promptTokenizerResult.input_ids;
-        return new ort.Tensor('int64', BigInt64Array.from(promptTokens.map(BigInt)), [1, promptTokens.length]);
+        return new ort.Tensor(
+            'int64', BigInt64Array.from(promptTokens.map(BigInt)),
+            [1, promptTokens.length]);
     }
 
     TokensToText(tokens, startidx) {
-        return this.tokenizer.decode(tokens.slice(startidx), { skip_special_tokens: false, });
+        return this.tokenizer.decode(
+            tokens.slice(startidx), { skip_special_tokens: false, });
     }
 }
 
@@ -52,17 +58,22 @@ export class LLM {
     inferenceSession = undefined;
 
     kv_dims = [];
-    eos = 0n;
     num_hidden_layers = 0;
 
+    eos = 0n;
+
     constructor() {}
+
+    // ...
 
     async init() {
         this.tokenizer = new Tokenizer();
         await this.tokenizer.init();
 
-        const modelBytes = await this.fetchAndCache(kModelFileAbsolutePath);
-        const modelExternalData = await this.fetchAndCache(kModelExternalDataAbsolutePath);
+        const modelBytes =
+            await this.fetchAndCache(kModelFileAbsolutePath);
+        const modelExternalData =
+            await this.fetchAndCache(kModelExternalDataAbsolutePath);
         let modelSize = modelBytes.byteLength + modelExternalData.byteLength;
         console.log(`${Math.round(modelSize / 1024 / 1024)} MB`);
 
@@ -80,19 +91,30 @@ export class LLM {
             ],
         };
         for (let i = 0; i < modelConfig.num_hidden_layers; ++i) {
-            inferenceSessionOptions.preferredOutputLocation[`present.${i}.key`] = 'gpu-buffer';
-            inferenceSessionOptions.preferredOutputLocation[`present.${i}.value`] = 'gpu-buffer';
+            inferenceSessionOptions.preferredOutputLocation
+                [`present.${i}.key`] = 'gpu-buffer';
+            inferenceSessionOptions.preferredOutputLocation
+                [`present.${i}.value`] = 'gpu-buffer';
         }
-        this.inferenceSession = await ort.InferenceSession.create(modelBytes, inferenceSessionOptions);
+        this.inferenceSession =
+            await ort.InferenceSession.create(modelBytes, inferenceSessionOptions);
         console.log('Create session success!');
 
         this.eos = modelConfig.eos_token_id;
         this.num_hidden_layers = modelConfig.num_hidden_layers;
-        this.kv_dims = [1, modelConfig.num_key_value_heads, 0, modelConfig.hidden_size / modelConfig.num_attention_heads];
+        this.kv_dims =
+            [1, modelConfig.num_key_value_heads, 0,
+             modelConfig.hidden_size / modelConfig.num_attention_heads];
     }
 
     async query(input, callback) {
-        let prompt =  `<|system|>\nYou are a friendly assistant.<|end|>\n<|user|>\n${input}<|end|>\n<|assistant|>\n`;
+        let prompt =
+            `<|system|>
+            You are a friendly assistant.<|end|>
+            <|user|>
+            ${input}<|end|>
+            <|assistant|>`;
+        const inferenceInputIds = await this.tokenizer.TokenizePrompt(prompt);
 
         let feed = {};
         const empty = new Uint16Array();
@@ -101,28 +123,30 @@ export class LLM {
             feed[`past_key_values.${i}.value`] = new ort.Tensor('float16', empty, this.kv_dims);
         }
 
-        const inferenceInputIds = await this.tokenizer.TokenizePrompt(prompt);
         feed['input_ids'] = inferenceInputIds;
-        const promptTokensCount = inferenceInputIds.size;
-
         const output_tokens = [];
         output_tokens.push(...inferenceInputIds.data);
 
         let seqlen = output_tokens.length;
         const input_len = inferenceInputIds.size;
-        feed['position_ids'] = new ort.Tensor('int64', BigInt64Array.from({ length: input_len }, (_, i) => BigInt(seqlen - input_len + i)), [1, input_len]);
+        feed['position_ids'] = new ort.Tensor(
+            'int64', BigInt64Array.from({ length: input_len },
+                (_, i) => BigInt(seqlen - input_len + i)),
+                [1, input_len]);
 
         console.log('Start inferencing.')
+        const promptTokensCount = inferenceInputIds.size;
         let last_token = 0n;
         // 32007 is |<end>| according to tokenizer.js so it is also an ending.
         while (last_token != this.eos && last_token != 32007 && seqlen < kMaxOutputTokens) {
+            
             seqlen = output_tokens.length;
             feed['attention_mask'] = new ort.Tensor('int64', BigInt64Array.from({ length: seqlen }, () => 1n), [1, seqlen]);
 
             const outputs = await this.inferenceSession.run(feed);
             last_token = BigInt(this.argmax(outputs.logits));
-
             output_tokens.push(last_token);
+
             const text = this.tokenizer.TokensToText(output_tokens, promptTokensCount);
             callback(text);
         
