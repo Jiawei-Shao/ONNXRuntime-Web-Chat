@@ -7,7 +7,7 @@ ort.env.wasm.wasmPaths = 'dist/';
 ort.env.wasm.numThreads = 1;
 ort.env.wasm.simd = true;
 
-env.localModelPath = 'model';
+env.localModelPath = 'model/Phi3.5';
 env.allowRemoteModels = false;
 env.allowLocalModels = true;
 env.backends.onnx.wasm.wasmPaths = 'dist/';
