@@ -1,13 +1,11 @@
 import ort from 'onnxruntime-web/webgpu'
-import { env, AutoTokenizer } from '@xenova/transformers';
-
-const kUseLocalModel = true;
+import { env, AutoTokenizer } from '@huggingface/transformers';
 
 ort.env.wasm.wasmPaths = 'dist/';
 ort.env.wasm.numThreads = 1;
 ort.env.wasm.simd = true;
 
-env.localModelPath = 'model/Phi3.5';
+env.localModelPath = 'model/DeepSeek-R1';
 env.allowRemoteModels = false;
 env.allowLocalModels = true;
 env.backends.onnx.wasm.wasmPaths = 'dist/';
@@ -15,19 +13,9 @@ env.backends.onnx.wasm.wasmPaths = 'dist/';
 const kConfigFileName = 'config.json';
 const kModelDataPath = 'onnx';
 const kModelFileName = 'model_q4f16.onnx';
-const kModelExternalDataFileName = 'model_q4f16.onnx_data';
 
 let kConfigFileAbsolutePath = `${env.localModelPath}/${kConfigFileName}`;
 let kModelFileAbsolutePath = `${env.localModelPath}/${kModelDataPath}/${kModelFileName}`;
-let kModelExternalDataAbsolutePath = `${env.localModelPath}/${kModelDataPath}/${kModelExternalDataFileName}`;
-
-if (!kUseLocalModel) {
-    kConfigFileAbsolutePath = "https://huggingface.co/microsoft/Phi-3-mini-4k-instruct-onnx-web/resolve/main";
-    kModelFileAbsolutePath = "https://huggingface.co/microsoft/Phi-3-mini-4k-instruct-onnx-web/resolve/main/onnx/model_q4f16.onnx";
-    kModelExternalDataAbsolutePath = "https://huggingface.co/microsoft/Phi-3-mini-4k-instruct-onnx-web/resolve/main/onnx/model_q4f16.onnx_data";
-    env.allowRemoteModels = true;
-    env.allowLocalModels = false;
-}
 
 const kOfficialPhi3ONNXModelRepo = 'https://huggingface.co/microsoft/Phi-3-mini-4k-instruct-onnx-web';
 
@@ -36,7 +24,7 @@ const kMaxOutputTokens = 4096;
 class Tokenizer {
     tokenizer = undefined;
     async init() {
-        this.tokenizer = await AutoTokenizer.from_pretrained('./');
+        this.tokenizer = await AutoTokenizer.from_pretrained("./");
     }
     async TokenizePrompt(prompt) {
         const promptTokenizerResult = await this.tokenizer(
@@ -72,9 +60,7 @@ export class LLM {
 
         const modelBytes =
             await this.fetchAndCache(kModelFileAbsolutePath);
-        const modelExternalData =
-            await this.fetchAndCache(kModelExternalDataAbsolutePath);
-        let modelSize = modelBytes.byteLength + modelExternalData.byteLength;
+        let modelSize = modelBytes.byteLength;
         console.log(`${Math.round(modelSize / 1024 / 1024)} MB`);
 
         const jsonBytes = await this.fetchAndCache(kConfigFileAbsolutePath);
@@ -83,12 +69,6 @@ export class LLM {
         const inferenceSessionOptions = {
             executionProviders: ["webgpu"],
             preferredOutputLocation: {},
-            externalData: [
-                {
-                    data: modelExternalData,
-                    path: kModelExternalDataFileName,
-                },
-            ],
         };
         for (let i = 0; i < modelConfig.num_hidden_layers; ++i) {
             inferenceSessionOptions.preferredOutputLocation
